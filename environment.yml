@@ -1,0 +1,16 @@
+name: ncoco
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+- python=3.10
+- matplotlib
+- numpy
+- cvxopt
+- gym
+- pyyaml
+- pip
+- pip:
+    - ray[default]
+    - tensorflow
+    - opencv-python
