@@ -1,4 +1,4 @@
-name: ncoco
+name: hotcoco
 channels:
   - conda-forge
   - defaults
@@ -13,4 +13,6 @@ dependencies:
 - pip:
     - ray[default]
     - tensorflow
+    - PettingZoo
+    - pettingzoo[butterfly]
     - opencv-python
