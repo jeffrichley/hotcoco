@@ -1,37 +1,38 @@
-import gym
-from HotEnv import HotEnv
-import cv2
-
+import random
 import time
+import ray
 
-# env = gym.make('CartPole-v0')
-env = HotEnv()
-for i_episode in range(20000000):
+ray.init()
 
-    if i_episode % 1000 == 0:
-        print(i_episode)
 
-    observation = env.reset()
-    done = False
-    # for t in range(100):
-    while not done:
-        # pic = env.render()
+@ray.remote
+class TestClass:
 
-        # print(observation)
-        shark_1_action = env.action_space.sample()
-        shark_2_action = env.action_space.sample()
-        # observation, reward, done, info = env.step((4, 3))
-        observation, reward, done, info = env.step((shark_1_action, shark_2_action))
+    def __init__(self):
+        pass
 
-        # if reward == 100:
-        #     pic = env.render(mode='rgb_array')
-        #     cv2.imwrite('winner.png', cv2.cvtColor(pic, cv2.COLOR_RGB2BGR))
+    def work(self, i):
+        time.sleep(random.random())
+        return i
 
-        # time.sleep(.05)
-        # time.sleep(.5)
 
-        if done:
-            observation = env.reset()
-            break
+tests = [TestClass.remote() for _ in range(10)]
+print('tests')
+print(tests)
 
-env.close()
+sum_in_completion_order = 0
+refs = [test.work.remote(i) for i, test in enumerate(tests)]
+print('refs')
+print(refs)
+
+unfinished = refs
+while unfinished:
+    # Returns the first ObjectRef that is ready.
+    finished, unfinished = ray.wait(unfinished, num_returns=1)
+    if finished[0] in refs:
+        print('finished', finished, refs.index(finished[0]))
+    else:
+        print('finished', finished)
+    result = ray.get(finished[0])
+    # process result
+    sum_in_completion_order = sum_in_completion_order + result
