@@ -1,8 +1,4 @@
-import gym
-from HotEnv import HotEnv
-import cv2
-
-import time
+from custom_games.HotEnv import HotEnv
 
 # env = gym.make('CartPole-v0')
 env = HotEnv()

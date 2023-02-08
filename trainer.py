@@ -7,7 +7,9 @@ from learning import train_learners
 
 def train():
     input_size = 135
-    num_joint_actions = 5**4
+    num_agents = 4
+    num_agent_actions = 6
+    num_joint_actions = num_agent_actions**num_agents
 
     play_queue = Queue(maxsize=100)
     cleaned_queue = Queue(maxsize=100)
@@ -19,7 +21,10 @@ def train():
     clean_data.remote(play_queue=play_queue, cleaned_queue=cleaned_queue)
 
     # train with the received data
-    train_learners.remote(training_queue=cleaned_queue, input_size=input_size, num_joint_actions=num_joint_actions)
+    train_learners.remote(training_queue=cleaned_queue,
+                          input_size=input_size,
+                          num_joint_actions=num_joint_actions,
+                          num_agent_actions=num_agent_actions)
 
     # just keep on playing
     ray.get(play_game_ref)

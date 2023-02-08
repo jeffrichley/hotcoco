@@ -1,38 +1,46 @@
-import random
-import time
-import ray
+import numpy as np
 
-ray.init()
+values = np.array([i for i in range(3**4)]).reshape((3, 3, 3, 3))
+unravelled = np.array([i for i in range(3**4)])
+
+print(values)
+print(values.shape)
+print(unravelled)
+print(unravelled.shape)
+
+all_num_actions = 3
+num_agents = 4
+num_actions = np.full(num_agents, all_num_actions)
+# powers = np.array([2, 1, 0])
+powers = np.array(range(num_agents-1, -1, -1))
+
+idx = -1
+total_actions = np.zeros((4, 3**4))
+for p1_action in range(3):
+    for p2_action in range(3):
+        for p3_action in range(3):
+            for p4_action in range(3):
+                idx += 1
+                total_actions[:, idx] = [p1_action, p2_action, p3_action, p4_action]
+
+                # unravelled_index = p1_action * num_actions**2 + p2_action * num_actions + p3_action
+                player_values = np.array([p1_action, p2_action, p3_action, p4_action])
+                unravelled_index = (player_values * np.power(num_actions, powers)).sum()
+
+                print(p1_action, p2_action, p3_action, p4_action)
+                print('indexing', values[(p1_action, p2_action, p3_action, p4_action)])
+                print('unravelled', unravelled[unravelled_index])
 
 
-@ray.remote
-class TestClass:
 
-    def __init__(self):
-        pass
+# values = np.array([2, 2, 2])
+# jt_action = values * np.power(num_actions, powers)
+# print(jt_action)
+# powers = np.tile(powers, (27, 1)).transpose()
+# print('powers', powers)
+# print(total_actions)
+tmp = (total_actions * np.tile(np.power(num_actions, powers), (3**4, 1)).transpose()).sum(axis=0)
+print('tmp.txt', tmp)
 
-    def work(self, i):
-        time.sleep(random.random())
-        return i
-
-
-tests = [TestClass.remote() for _ in range(10)]
-print('tests')
-print(tests)
-
-sum_in_completion_order = 0
-refs = [test.work.remote(i) for i, test in enumerate(tests)]
-print('refs')
-print(refs)
-
-unfinished = refs
-while unfinished:
-    # Returns the first ObjectRef that is ready.
-    finished, unfinished = ray.wait(unfinished, num_returns=1)
-    if finished[0] in refs:
-        print('finished', finished, refs.index(finished[0]))
-    else:
-        print('finished', finished)
-    result = ray.get(finished[0])
-    # process result
-    sum_in_completion_order = sum_in_completion_order + result
+# t = np.zeros((5, 5, 5, 5))
+# print(t.shape, t.size)

@@ -1,6 +1,5 @@
 import ray
 import numpy as np
-import tensorflow as tf
 from tensorflow import keras
 from keras import layers
 
@@ -64,22 +63,29 @@ class Memory:
 @ray.remote
 class Trainer:
 
-    def __init__(self, trainer_names, input_size, num_joint_actions):
+    def __init__(self, trainer_names, input_size, num_joint_actions, num_agent_actions, gamma=0.99, batch_size=5):
         self.trainer_names = trainer_names
         self.input_size = input_size
         self.num_joint_actions = num_joint_actions
+        self.num_players = len(self.trainer_names)
+        self.player_num_actions = np.full(self.num_players, num_agent_actions)
+        self.player_powers = np.array(range(self.num_players-1, -1, -1))  # used for indexing joint actions
+        self.joint_action_index_multiplier = np.tile(np.power(self.player_num_actions, self.player_powers), (batch_size, 1)).transpose()
+
 
         # learning bits
+        self.gamma = 0.99
+        self.batch_size = batch_size
         self.optimizer = keras.optimizers.Adam()
         self.loss_function = keras.losses.Huber()
 
         # actual neural nets to update
         self.models = {}
-        self.target_model = {}
+        self.target_models = {}
         self.memories = {}
         for name in trainer_names:
             self.models[name] = self.create_q_model()
-            self.target_model[name] = self.create_q_model()
+            self.target_models[name] = self.create_q_model()
             self.memories[name] = Memory(memory_size=100000)
 
     def create_q_model(self):
@@ -101,20 +107,54 @@ class Trainer:
         return model
 
     def add_data(self, new_training_data):
-        for name in new_training_data.keys():
+        for name in self.trainer_names:
             memory = self.memories[name]
             for state, action, reward, state_prime in new_training_data[name]:
                 memory.remember(state=state, action=action, reward=reward, state_prime=state_prime)
 
-    # def train_nn(self, states, actions, rewards, state_primes):
     def train_nn(self):
-        pass
+        print()
+        print()
+        print()
+
+        all_actions = np.zeros((len(self.trainer_names), self.batch_size))
+
+        # 1. pull from the replay buffers all the information needed to do a learning step
+        for idx, name in enumerate(self.trainer_names):
+            sample_idx, states, actions, rewards, state_primes = self.memories[name].sample_memory(self.batch_size)
+            all_actions[idx] = actions
+
+            # 2. predict what the payoff matrices are
+            future_reward = self.target_models[name](state_primes, training=False)
+
+            # 3. correct all of the terminal states to be all
+            # --- don't think we will need to do this for now
+
+            # 4. calculate the coco values for each player
+            # TODO: do coco calculations in a distributed manner
+            # need to clean any nans from the coco calculations
+            coco_values = np.zeros(rewards.shape)
+
+            # 5. calculate the Q-values to be learned
+            updated_q_value = rewards + self.gamma * coco_values
+
+
+        # 6. calculate the index of the actual joint action that was played
+        joint_actions = (all_actions * self.joint_action_index_multiplier).sum(axis=0)
+        print(self.joint_action_index_multiplier, joint_actions, all_actions)
+
+        # 7. create the masks that will be used to make sure we only learn from the actions we took
+
+        # 8. actually perform the update
+
+
+
+        print('done with training')
 
 
 @ray.remote
-def train_learners(training_queue, input_size, num_joint_actions):
+def train_learners(training_queue, input_size, num_joint_actions, num_agent_actions):
     trainer_ref = None
-    memories = None
 
     while True:
         # empty out the data queue before we go back to training
@@ -123,13 +163,16 @@ def train_learners(training_queue, input_size, num_joint_actions):
             new_data_received = True
             all_training_data = training_queue.get()
 
-            # make sure all the trainers are actually created
+            # make sure the trainer is actually created
             if trainer_ref is None:
                 trainer_ref = Trainer.remote(trainer_names=all_training_data.keys(),
                                              input_size=input_size,
-                                             num_joint_actions=num_joint_actions)
+                                             num_joint_actions=num_joint_actions,
+                                             num_agent_actions=num_agent_actions)
 
-            ray.get(trainer_ref.add_data.remote(all_training_data))
+            trainer_ref.add_data.remote(all_training_data)
 
         if new_data_received:
-            ray.get(trainer_ref.train_nn.remote())
+            trainer_ref.train_nn.remote()
+
+        # TODO: periodically test the policies

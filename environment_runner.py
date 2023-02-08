@@ -48,6 +48,7 @@ class ZooRunner():
         return self.agent_num
 
     def get_action(self, observation, agent):
+        # TODO: need to actually use a policy from time to time
         action = self.env.action_space(agent).sample()
         return action
 
