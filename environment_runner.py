@@ -17,11 +17,13 @@ class ZooRunner():
         self.env.reset()
         all_observations = {}
         previous_states = {}
+        previous_actions = {}
         for agent in self.env.agent_iter():
 
             if agent not in all_observations.keys():
                 all_observations[agent] = []
                 previous_states[agent] = None
+                previous_actions[agent] = None
 
             next_state, reward, termination, truncation, info = self.env.last()
 
@@ -31,11 +33,14 @@ class ZooRunner():
                 # because this agent is still playing, we need to capture the data for learning
                 if previous_states[agent] is not None:
                     previous_state = previous_states[agent]
-                    all_observations[agent].append((previous_state, reward, next_state))
+                    previous_action = previous_actions[agent]
+                    all_observations[agent].append((previous_state, previous_action, reward, next_state))
 
                 previous_states[agent] = next_state
 
                 action = self.get_action(next_state, agent)
+                previous_actions[agent] = action
+
             self.env.step(action)
 
         self.play_queue.put(all_observations)
