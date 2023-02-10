@@ -17,6 +17,7 @@ class Memory:
         self.actions = None
         self.rewards = None
         self.state_primes = None
+        self.coco_cache = None
 
         self.memory_count = -1
 
@@ -25,6 +26,7 @@ class Memory:
         self.actions = None
         self.rewards = None
         self.state_primes = None
+        self.coco_cache = None
 
         self.memory_count = -1
 
@@ -35,6 +37,7 @@ class Memory:
             self.actions = np.empty(self.memory_size)
             self.rewards = np.empty((self.memory_size))
             self.state_primes = np.empty((self.memory_size, state_prime.shape[0]))
+            self.coco_cache = np.full(self.memory_size, np.nan)
 
         self.memory_count += 1
 
@@ -45,17 +48,23 @@ class Memory:
         self.rewards[idx] = reward
         self.state_primes[idx] = state_prime
 
-    def sample_memory(self, count):
+    def sample_memory(self, count, sample_idx=None):
 
         # randomly sample from the memory
-        sample_idx = np.random.randint(low=0, high=min(self.memory_count, self.memory_size), size=count)
+        if sample_idx is None:
+            sample_idx = np.random.randint(low=0, high=min(self.memory_count, self.memory_size), size=count)
 
         states = self.states[sample_idx]
         actions = self.actions[sample_idx]
         rewards = self.rewards[sample_idx]
         state_primes = self.state_primes[sample_idx]
+        coco_values = self.coco_cache[sample_idx]
+        # print('***', coco_values.shape)
 
-        return sample_idx, states, actions, rewards, state_primes
+        return sample_idx, states, actions, rewards, state_primes, coco_values
+
+    def save_coco_values(self, idxs, coco_values):
+        self.coco_cache[idxs] = coco_values
 
     def num_samples(self):
         # how many samples do we have?
@@ -125,14 +134,19 @@ class Trainer:
         all_rewards = np.zeros((self.num_players, self.batch_size))
 
         # used for calculating coco values
+        # TODO: switch batch size and num players to be consistent
         all_future_rewards = np.zeros((self.batch_size, self.num_players, self.num_joint_actions))
+        all_cached_coco_values = np.full((self.batch_size, self.num_players), np.nan)
 
         # 1. pull from the replay buffers all the information needed to do a learning step
+        sample_idx = None
         for idx, name in enumerate(self.trainer_names):
-            sample_idx, states, actions, rewards, state_primes = self.memories[name].sample_memory(self.batch_size)
+            sample_idx, states, actions, rewards, state_primes, cached_coco_values = self.memories[name].sample_memory(self.batch_size, sample_idx=sample_idx)
             all_states[idx] = states
             all_actions[idx] = actions
             all_rewards[idx] = rewards
+            # print(all_cached_coco_values.shape, all_cached_coco_values[idx].shape, cached_coco_values.shape)
+            all_cached_coco_values[:, idx] = cached_coco_values
 
             # 2. predict what the payoff matrices are
             future_reward = self.target_models[name](state_primes, training=False)
@@ -146,9 +160,13 @@ class Trainer:
         # coco_values = np.zeros(rewards.shape)
         # TODO: need to cache coco results
         # TODO: need to check for bad values i.e. None
-        coco_values = compute_coco_distributed(all_future_rewards, 8, self.num_players)
+        coco_values = compute_coco_distributed(all_future_rewards, 8, self.num_players, all_cached_coco_values)
 
-        print((coco_values == None).any())
+        # cache the coco values, they are expensive!
+        for idx, name in enumerate(self.trainer_names):
+            self.memories[name].save_coco_values(sample_idx, coco_values[:, idx])
+
+        # print((coco_values == None).any())
 
         # 5. calculate the Q-values to be learned
         # updated_q_value = rewards + self.gamma * coco_values
@@ -163,6 +181,8 @@ class Trainer:
         # 8. actually perform the update
 
 
+
+        # TODO: periodically need to swap brains
 
         print('done with training')
 
