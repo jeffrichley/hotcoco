@@ -1,26 +1,28 @@
 import math
 import time
+import numpy as np
 
-nplayers = 20
-# size_c = 2
+actions = np.array([[2., 1., 4., 0.],
+                    [3., 5., 0., 0.],
+                    [0., 4., 0., 0.],
+                    [5., 1., 0., 0.],
+                    [3., 0., 0., 0.],
+                    [5., 1., 1., 1.],
+                    [3., 0., 0., 0.],
+                    [5., 5., 5., 5.]])
 
-for size_c in range(nplayers+1):
-    one = int((math.factorial(nplayers - 1) / (math.factorial(size_c) * math.factorial(nplayers - 1 - size_c))))
-    two = math.comb(nplayers - 1, size_c)
+num_players = 4
+player_num_actions = 6
+batch_size = 8
 
-    print(size_c, one, two, one == two)
+player_powers = np.array(range(num_players-1, -1, -1))
+joint_action_index_multiplier = np.tile(np.power(player_num_actions, player_powers), (batch_size, 1))
 
+final = joint_actions = (actions * joint_action_index_multiplier).sum(axis=1)
 
-# start1 = time.time()
-# for _ in range(100000000):
-#     (math.factorial(nplayers - 1) / (math.factorial(size_c) * math.factorial(nplayers - 1 - size_c)))
-# end1 = time.time()
-#
-# start2 = time.time()
-# for _ in range(100000000):
-#     math.comb(nplayers - 1, size_c)
-# end2 = time.time()
-
-
-print('custom', end1 - start1)
-print('math', end2 - start2)
+print('actions')
+print(actions)
+print('multiplier')
+print(joint_action_index_multiplier)
+print('final')
+print(final)

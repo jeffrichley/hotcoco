@@ -102,8 +102,6 @@ class Game:
         for p in range(self.nplayers):
             tup += (self.act_names[p][state[p]],)
 
-        print(tup)
-
     def coal_complement(self, coal):
         """
         :param coal:
@@ -201,7 +199,7 @@ class Game:
         for p in range(1, self.nplayers):
             mm += self.payoffs[p]
         act = np.unravel_index(mm.argmax(), mm.shape)
-        # print( "maxval: ", mm[act] )
+
         return act
 
     def get_values_strategy(self, strat, payoffs=None):
@@ -327,7 +325,12 @@ class Game:
 
 
 @ray.remote
+def compute_coco_group_distributed(data, num_players, cached_coco_values_groups):
+    return compute_coco_group(data, num_players, cached_coco_values_groups)
+
+
 def compute_coco_group(data, num_players, cached_coco_values_groups):
+
     # Tell GLPK to produce no output, and timeout after 1 second
     solvers.options['glpk'] = {'msg_lev': 'GLP_MSG_OFF', 'tm_lim': 1000}
 
@@ -337,23 +340,14 @@ def compute_coco_group(data, num_players, cached_coco_values_groups):
     new_data = np.reshape(data, new_shape)
 
     coco_values = np.zeros((sample_size, num_players))
-    # print('cache size', cached_coco_values_groups.shape)
     num_cached = 0
     num_not_cached = 0
+
     for idx in range(sample_size):
         cached_coco_values = cached_coco_values_groups[idx]
         if not np.isnan(cached_coco_values).any():
-            # print('hmm', coco_values.shape, cached_coco_values.shape)
-            # print('caching', cached_coco_values)
             coco_values[idx] = cached_coco_values
             num_cached += 1
-
-            # payoffs = new_data[idx]
-            # game = Game(nplayers=num_players, payoffs=payoffs)
-            # game_coco_values = game.coco_values()
-
-            # if not np.allclose(game_coco_values, cached_coco_values):
-            #     print('CACHE DANGER!!!', game_coco_values, cached_coco_values)
         else:
             payoffs = new_data[idx]
             game = Game(nplayers=num_players, payoffs=payoffs)
@@ -361,25 +355,16 @@ def compute_coco_group(data, num_players, cached_coco_values_groups):
             coco_values[idx] = game_coco_values
             num_not_cached += 1
 
-            game_coco_values2 = game.coco_values()
-            if not np.allclose(game_coco_values, game_coco_values2):
-                print('CALC DANGER!!!', game_coco_values, game_coco_values2)
-
-    total = num_cached + num_not_cached
-    # print('cache test', num_not_cached, num_cached, num_not_cached/total, num_cached/total)
-
     return coco_values
 
 
 def compute_coco_distributed(data, num_actors, num_players, all_cached_coco_values):
     data_groups = np.array_split(data, num_actors)
     cached_coco_values_groups = np.array_split(all_cached_coco_values, num_actors)
-    answer_refs = [compute_coco_group.remote(data_group, num_players, coco_group) for data_group, coco_group in zip(data_groups, cached_coco_values_groups)]
+    answer_refs = [compute_coco_group_distributed.remote(data_group, num_players, coco_group) for data_group, coco_group in zip(data_groups, cached_coco_values_groups)]
     answers = ray.get(answer_refs)
     stacked_answer = np.vstack(answers)
-    # for answer in answers:
-    #     print(answer.shape)
-    # print('stacked answer shape', stacked_answer.shape)
+
     return stacked_answer
 
 
@@ -398,18 +383,4 @@ if __name__ == '__main__':
         answer = compute_coco_distributed(data=all_payoffs, num_actors=i, num_players=num_players)
         end = time.time()
         print(i, end - start)
-    # print(answer)
-    # print(answer.shape)
 
-
-
-
-    # print(all_payoffs.shape)
-
-    # groups = np.array_split(all_payoffs, 4)
-
-
-    # game = Game(nplayers=num_players, payoffs=all_payoffs)
-    # coco_values = game.compute_coco()
-
-    # print(coco_values)

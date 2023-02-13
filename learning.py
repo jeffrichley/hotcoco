@@ -1,5 +1,6 @@
 import ray
 import numpy as np
+import tensorflow as tf
 from tensorflow import keras
 from keras import layers
 
@@ -8,9 +9,11 @@ from coco_utils import compute_coco_distributed
 
 class Memory:
 
-    def __init__(self, memory_size=1000000):
+    def __init__(self, num_players, memory_size=1000000):
         # how many training samples should we remember?
         self.memory_size = memory_size
+
+        self.num_players = num_players
 
         # the actual memory items
         self.states = None
@@ -33,11 +36,11 @@ class Memory:
     def remember(self, state, action, reward, state_prime):
 
         if self.states is None:
-            self.states = np.empty((self.memory_size, state.shape[0]))
-            self.actions = np.empty(self.memory_size)
-            self.rewards = np.empty((self.memory_size))
-            self.state_primes = np.empty((self.memory_size, state_prime.shape[0]))
-            self.coco_cache = np.full(self.memory_size, np.nan)
+            self.states = np.empty((self.memory_size, self.num_players, state.shape[1]))
+            self.actions = np.empty((self.memory_size, self.num_players))
+            self.rewards = np.empty((self.memory_size, self.num_players))
+            self.state_primes = np.empty((self.memory_size, self.num_players, state_prime.shape[1]))
+            self.coco_cache = np.full((self.memory_size, self.num_players), np.nan)
 
         self.memory_count += 1
 
@@ -48,18 +51,16 @@ class Memory:
         self.rewards[idx] = reward
         self.state_primes[idx] = state_prime
 
-    def sample_memory(self, count, sample_idx=None):
+    def sample_memory(self, count):
 
         # randomly sample from the memory
-        if sample_idx is None:
-            sample_idx = np.random.randint(low=0, high=min(self.memory_count, self.memory_size), size=count)
+        sample_idx = np.random.randint(low=0, high=min(self.memory_count, self.memory_size), size=count)
 
         states = self.states[sample_idx]
         actions = self.actions[sample_idx]
         rewards = self.rewards[sample_idx]
         state_primes = self.state_primes[sample_idx]
         coco_values = self.coco_cache[sample_idx]
-        # print('***', coco_values.shape)
 
         return sample_idx, states, actions, rewards, state_primes, coco_values
 
@@ -84,26 +85,33 @@ class Trainer:
         self.num_players = len(self.trainer_names)
         self.player_num_actions = np.full(self.num_players, num_agent_actions)
         self.player_powers = np.array(range(self.num_players-1, -1, -1))  # used for indexing joint actions
-        self.joint_action_index_multiplier = np.tile(np.power(self.player_num_actions, self.player_powers), (batch_size, 1)).transpose()
+        self.joint_action_index_multiplier = np.tile(np.power(self.player_num_actions, self.player_powers), (batch_size, 1))
 
         self.num_coco_calculation_splits = num_coco_calculation_splits
 
         # learning bits
         self.gamma = 0.99
         self.batch_size = batch_size
-        self.optimizer = keras.optimizers.Adam()
-        self.loss_function = keras.losses.Huber()
+        # self.optimizer = keras.optimizers.Adam()
+        self.optimizers ={}
+        # self.loss_function = keras.losses.Huber()
+        self.loss_functions = {}
 
         # actual neural nets to update
         self.models = {}
         self.target_models = {}
         self.memories = {}
         for name in trainer_names:
-            self.models[name] = self.create_q_model()
-            self.target_models[name] = self.create_q_model()
-            self.memories[name] = Memory(memory_size=100000)
+            self.optimizers[name] = keras.optimizers.Adam()
+            self.loss_functions[name] = keras.losses.Huber()
 
-    def create_q_model(self):
+            self.models[name] = self.create_q_model(self.optimizers[name], self.loss_functions[name])
+            # TODO: shouldn't really be reusing the optimizer and loss functions
+            self.target_models[name] = self.create_q_model(self.optimizers[name], self.loss_functions[name])
+
+        self.memory = Memory(num_players=self.num_players, memory_size=100000)
+
+    def create_q_model(self, optimizer, loss_function):
 
         # create the networks
         inputs_vectors = layers.Input(shape=self.input_size)
@@ -117,78 +125,143 @@ class Trainer:
         policy_output = layers.Dense(self.num_joint_actions, activation=None)(dense_layer2)
 
         model = keras.Model(inputs=inputs_vectors, outputs=policy_output)
-        model.compile(optimizer=self.optimizer, loss=self.loss_function)
+        model.compile(optimizer=optimizer, loss=loss_function)
 
         return model
 
     def add_data(self, new_training_data):
-        for name in self.trainer_names:
-            memory = self.memories[name]
+        states = None
+        actions = None
+        rewards = None
+        state_primes = None
+        for idx, name in enumerate(self.trainer_names):
+            # memory = self.memories[name]
             for state, action, reward, state_prime in new_training_data[name]:
-                memory.remember(state=state, action=action, reward=reward, state_prime=state_prime)
+                if states is None:
+                    states = np.zeros((self.num_players, state.shape[0]))
+                    actions = np.zeros(self.num_players)
+                    rewards = np.zeros(self.num_players)
+                    state_primes = np.zeros((self.num_players, state.shape[0]))
+
+                states[idx] = state
+                actions[idx] = action
+                rewards[idx] = reward
+                state_primes[idx] = state_prime
+
+                self.memory.remember(state=states, action=actions, reward=rewards, state_prime=state_primes)
+
+        self.memory.remember(state=states, action=actions, reward=rewards, state_prime=state_primes)
 
     def train_nn(self):
-        # create the arrays to store the samples
-        all_states = np.zeros((self.num_players, self.batch_size, self.input_size))
-        all_actions = np.zeros((self.num_players, self.batch_size))
-        all_rewards = np.zeros((self.num_players, self.batch_size))
-
         # used for calculating coco values
         # TODO: switch batch size and num players to be consistent
         all_future_rewards = np.zeros((self.batch_size, self.num_players, self.num_joint_actions))
-        all_cached_coco_values = np.full((self.batch_size, self.num_players), np.nan)
 
         # 1. pull from the replay buffers all the information needed to do a learning step
-        sample_idx = None
-        for idx, name in enumerate(self.trainer_names):
-            sample_idx, states, actions, rewards, state_primes, cached_coco_values = self.memories[name].sample_memory(self.batch_size, sample_idx=sample_idx)
-            all_states[idx] = states
-            all_actions[idx] = actions
-            all_rewards[idx] = rewards
-            # print(all_cached_coco_values.shape, all_cached_coco_values[idx].shape, cached_coco_values.shape)
-            all_cached_coco_values[:, idx] = cached_coco_values
+        sample_idx, states, actions, rewards, state_primes, cached_coco_values = self.memory.sample_memory(self.batch_size)
 
-            # 2. predict what the payoff matrices are
-            future_reward = self.target_models[name](state_primes, training=False)
+        # 2. predict what the payoff matrices are
+        for idx, name in enumerate(self.trainer_names):
+            # TODO: Can we do this in one shot?
+            future_reward = self.target_models[name](state_primes[:, idx], training=False)
             all_future_rewards[:, idx] = future_reward
 
-            # 3. correct all of the terminal states to be all
-            # --- don't think we will need to do this for now
+        # 3. correct all of the terminal states to be all
+        # --- don't think we will need to do this for now
 
         # 4. calculate the coco values for each player
         # need to clean any nans from the coco calculations
-        # coco_values = np.zeros(rewards.shape)
-        # TODO: need to cache coco results
         # TODO: need to check for bad values i.e. None
-        coco_values = compute_coco_distributed(all_future_rewards, 8, self.num_players, all_cached_coco_values)
+        coco_values = compute_coco_distributed(all_future_rewards, 8, self.num_players, cached_coco_values)
 
         # cache the coco values, they are expensive!
-        for idx, name in enumerate(self.trainer_names):
-            self.memories[name].save_coco_values(sample_idx, coco_values[:, idx])
-
-        # print((coco_values == None).any())
+        self.memory.save_coco_values(sample_idx, coco_values)
 
         # 5. calculate the Q-values to be learned
-        # updated_q_value = rewards + self.gamma * coco_values
+        updated_q_values = rewards + self.gamma * coco_values
 
 
         # 6. calculate the index of the actual joint action that was played
-        joint_actions = (all_actions * self.joint_action_index_multiplier).sum(axis=0)
-        # print(self.joint_action_index_multiplier, joint_actions, all_actions)
+        joint_actions = joint_actions = (actions * self.joint_action_index_multiplier).sum(axis=1)
+        # print(actions.shape, self.joint_action_index_multiplier.shape, joint_actions.shape)
+        # print('actions')
+        # print(actions)
+        # print('multiplier')
+        # print(self.joint_action_index_multiplier)
+        # print(self.joint_action_index_multiplier, joint_actions, actions)
 
         # 7. create the masks that will be used to make sure we only learn from the actions we took
+        masks = tf.one_hot(joint_actions, self.num_joint_actions)
 
         # 8. actually perform the update
-
-
+        self.update(states, masks, updated_q_values)
+        # update([state_ddg_dim_observation, state_combined_goal_heading_vector], p1_masks, p1_updated_q_values, learner_name='ddg', epoch=episode_count)
+        # for idx, name in enumerate(self.trainer_names):
+        #     state_sample = states[idx]
+        #     sample_updated_q_values = updated_q_value[idx]
+        #
+        #     print(type(self.models[name]))
+        #     self.models[name].update(state_sample, masks, sample_updated_q_values)
 
         # TODO: periodically need to swap brains
-
         print('done with training')
+
+    def update(self, all_state_sample, all_masks, all_updated_q_values):  # , learner_name=None, epoch=0):
+        masks = tf.convert_to_tensor(all_masks)
+
+        for idx, name in enumerate(self.trainer_names):
+            # print(f'**** start {name}')
+        # for idx in range(2):
+            name = self.trainer_names[idx]
+            model = self.models[name]
+
+            state_sample = all_state_sample[:, idx]
+            # print('state sample', all_state_sample.shape, state_sample.shape)
+            state_sample = tf.convert_to_tensor(state_sample)
+
+            updated_q_values = all_updated_q_values[:, idx]
+            # print('updated_q_values', all_updated_q_values.shape, updated_q_values.shape)
+            updated_q_values = tf.convert_to_tensor(updated_q_values, dtype=tf.float32)
+
+            # update the main model
+            with tf.GradientTape() as tape:
+                # Train the model on the states and updated Q-values
+                # by first predicting the q values
+                q_values = model(state_sample)
+
+                # print(q_values.shape, masks.shape)
+                # Apply the masks to the Q-values to get the Q-value for action taken
+                q_action = tf.reduce_sum(tf.multiply(q_values, masks), axis=1)
+
+                # print(q_values.shape, q_action.shape, updated_q_values.shape)
+
+                # Calculate loss between new Q-value and old Q-value
+                # can use sample_weight to apply individual loss scaling
+                # loss = self.loss_function(updated_q_values, q_action)
+                loss = self.loss_functions[name](updated_q_values, q_action)
+
+            # calculate and apply the gradients to the model
+            grads = tape.gradient(loss, model.trainable_variables)
+            grads = [tf.clip_by_norm(g, 2) for g in grads]
+            # self.optimizer.apply_gradients(zip(grads, model.trainable_variables))
+            self.optimizers[name].apply_gradients(zip(grads, model.trainable_variables))
+
+            # periodic tensorboard logging
+            # if learner_name is not None and epoch % 10 == 0:
+            #     tf.summary.scalar('loss_' + learner_name, loss, step=epoch)
+            #     top = tf.abs(q_action - updated_q_values)
+            #     run_error = top / tf.reduce_sum(top)
+            #     avg_error = tf.math.reduce_mean(run_error)
+            #     max_error = tf.math.reduce_max(top)
+            #     tf.summary.scalar('avg_error_' + learner_name, avg_error, step=epoch)
+            #     tf.summary.scalar('max_error_' + learner_name, max_error, step=epoch)
+            #
+            #     max_norm = tf.reduce_max([tf.norm(grad) for grad in grads])
+            #     tf.summary.scalar('max_gradient_norm_' + learner_name, max_norm, step=epoch)
 
 
 @ray.remote
-def train_learners(training_queue, input_size, num_joint_actions, num_agent_actions):
+def train_learners(training_queue, input_size, num_joint_actions, num_agent_actions, batch_size):
     trainer_ref = None
 
     while True:
@@ -200,10 +273,11 @@ def train_learners(training_queue, input_size, num_joint_actions, num_agent_acti
 
             # make sure the trainer is actually created
             if trainer_ref is None:
-                trainer_ref = Trainer.remote(trainer_names=all_training_data.keys(),
+                trainer_ref = Trainer.remote(trainer_names=list(all_training_data.keys()),
                                              input_size=input_size,
                                              num_joint_actions=num_joint_actions,
-                                             num_agent_actions=num_agent_actions)
+                                             num_agent_actions=num_agent_actions,
+                                             batch_size=batch_size)
 
             trainer_ref.add_data.remote(all_training_data)
 
