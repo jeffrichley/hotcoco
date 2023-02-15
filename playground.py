@@ -1,23 +1,25 @@
-import numpy as np
-from pettingzoo.butterfly import knights_archers_zombies_v10
+import math
+import matplotlib.pyplot as plt
 
-trainer_names = ['archer_0', 'archer_1', 'knight_0', 'knight_1']
-env = knights_archers_zombies_v10.env()
-env.reset()
+min_epsilon = 0.1
+max_epsilon = 1.0
+epsilon_decay = 0.001
 
-observations = np.zeros((1, 4, 135))
-for idx, name in enumerate(trainer_names):
-    observation = np.reshape(env.observe(name), 135)
-    observations[0, idx] = observation
-    print(observation.shape)
-    print('*********')
+epsilons = []
+min_step = None
 
-print(observations.shape)
+for number_of_steps_played in range(40000):
+    value = max(min_epsilon, min_epsilon + (max_epsilon - min_epsilon) * math.exp(-epsilon_decay * number_of_steps_played))
+    epsilons.append(value)
 
-for agent in env.agent_iter():
-    next_state, reward, termination, truncation, info = env.last()
-    if termination:
-        action = None
-    else:
-        action = env.action_space(agent).sample()
-    env.step(action)
+    # print(number_of_steps_played, value)
+    if min_step is None and value <= 0.105:
+        min_step = number_of_steps_played
+        print(min_step)
+
+plt.plot(epsilons)
+# plt.title('Effect of Learning Rate')
+# plt.xlabel('Episodes')
+# plt.ylabel('Rolling Avg 100 Episode Reward')
+
+plt.show()

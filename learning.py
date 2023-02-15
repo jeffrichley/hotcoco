@@ -1,3 +1,4 @@
+import time
 import ray
 import numpy as np
 import tensorflow as tf
@@ -227,6 +228,9 @@ class Trainer(BaseLearner):
 def train_learners(training_queue, input_size, num_joint_actions, num_agent_actions, batch_size):
     trainer_ref = None
 
+    num_rounds = 0
+    num_pulled = 0
+
     while True:
         # empty out the data queue before we go back to training
         new_data_received = False
@@ -246,5 +250,7 @@ def train_learners(training_queue, input_size, num_joint_actions, num_agent_acti
 
         if new_data_received:
             trainer_ref.train_nn.remote()
+        else:
+            time.sleep(0.01)
 
         # TODO: periodically test the policies

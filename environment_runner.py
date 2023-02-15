@@ -1,3 +1,4 @@
+import math
 import numpy as np
 from numpy import unravel_index
 import ray
@@ -18,14 +19,22 @@ class ZooRunner:
         self.play_queue = play_queue
         self.env = self.create_env()
 
-        self.epsilon = 0.75
+        self.epsilon = 0.99
+        self.max_epsilon = 1.0
+        self.min_epsilon = 0.1
+        self.epsilon_decay = 0.001
 
         self.learner = BaseLearner(trainer_names=trainer_names,
                                    input_size=input_size,
                                    num_joint_actions=num_joint_actions)
 
+        self.number_of_steps_played = 0
+
     def create_env(self):
         raise Exception('Base class is not instantiable')
+
+    def decay_epsilon(self):
+        self.epsilon = max(self.min_epsilon, self.min_epsilon + (self.max_epsilon - self.min_epsilon) * math.exp(-self.epsilon_decay * self.number_of_steps_played))
 
     def run_game(self):
         self.env.reset()
@@ -38,8 +47,11 @@ class ZooRunner:
         for agent in self.env.agent_iter():
 
             if agent not in agent_actions:
-                print(agent, agent_actions)
                 agent_actions = self.get_actions()
+                self.number_of_steps_played += 1
+                self.decay_epsilon()
+                if self.number_of_steps_played % 100 == 0:
+                    print(self.number_of_steps_played, self.epsilon)
 
             if agent not in all_observations.keys():
                 all_observations[agent] = []

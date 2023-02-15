@@ -8,8 +8,9 @@ from learning import train_learners
 def train():
     trainer_names = ['archer_0', 'archer_1', 'knight_0', 'knight_1']
     number_of_concurrent_games = 1
-    # batch_size = 512
-    batch_size = 16
+    # number_of_concurrent_games = 4
+    batch_size = 512
+    # batch_size = 16
     input_size = 135
     num_agents = 4
     num_agent_actions = 6
