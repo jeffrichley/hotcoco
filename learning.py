@@ -2,16 +2,17 @@ import time
 import ray
 import numpy as np
 import tensorflow as tf
-from tensorflow import keras
-from keras import layers
 
 from coco_utils import compute_coco_distributed
 from learner_base import BaseLearner
 
 
 class Memory:
+    """
+    Responsible for remembering and forgetting data samples
+    """
 
-    def __init__(self, num_players, memory_size=1000000):
+    def __init__(self, num_players, memory_size=100000):
         # how many training samples should we remember?
         self.memory_size = memory_size
 
@@ -27,6 +28,9 @@ class Memory:
         self.memory_count = -1
 
     def clear_memory(self):
+        """
+        Throws away all stored information
+        """
         self.states = None
         self.actions = None
         self.rewards = None
@@ -37,6 +41,7 @@ class Memory:
 
     def remember(self, state, action, reward, state_prime):
 
+        # lazy instantiation
         if self.states is None:
             self.states = np.empty((self.memory_size, self.num_players, state.shape[1]))
             self.actions = np.empty((self.memory_size, self.num_players))
@@ -44,6 +49,7 @@ class Memory:
             self.state_primes = np.empty((self.memory_size, self.num_players, state_prime.shape[1]))
             self.coco_cache = np.full((self.memory_size, self.num_players), np.nan)
 
+        # how many samples have we been given
         self.memory_count += 1
 
         # remember everything we've been given
@@ -54,10 +60,16 @@ class Memory:
         self.state_primes[idx] = state_prime
 
     def sample_memory(self, count):
+        """
+        Get a number of samples of training data
+        :param count: How many samples of training data to retrieve
+        :return: The requested training data
+        """
 
         # randomly sample from the memory
         sample_idx = np.random.randint(low=0, high=min(self.memory_count, self.memory_size), size=count)
 
+        # pull the information out of the memory to return
         states = self.states[sample_idx]
         actions = self.actions[sample_idx]
         rewards = self.rewards[sample_idx]
@@ -67,10 +79,18 @@ class Memory:
         return sample_idx, states, actions, rewards, state_primes, coco_values
 
     def save_coco_values(self, idxs, coco_values):
+        """
+        We need to cache computed coco values, they are very expensive to calculate
+        :param idxs: What indexes were sampled from so we can update the cache
+        :param coco_values: The computed coco values to be cached
+        """
         self.coco_cache[idxs] = coco_values
 
     def num_samples(self):
-        # how many samples do we have?
+        """
+        How many samples do we have?
+        :return: The number of samples we have to pull from
+        """
         return min(self.memory_count, self.memory_size)
 
 
@@ -106,7 +126,6 @@ class Trainer(BaseLearner):
         rewards = None
         state_primes = None
         for idx, name in enumerate(self.trainer_names):
-            # memory = self.memories[name]
             for state, action, reward, state_prime in new_training_data[name]:
                 if states is None:
                     states = np.zeros((self.num_players, state.shape[0]))
@@ -121,11 +140,10 @@ class Trainer(BaseLearner):
 
                 self.memory.remember(state=states, action=actions, reward=rewards, state_prime=state_primes)
 
-        self.memory.remember(state=states, action=actions, reward=rewards, state_prime=state_primes)
+        # self.memory.remember(state=states, action=actions, reward=rewards, state_prime=state_primes)
 
     def train_nn(self):
         # used for calculating coco values
-        # TODO: switch batch size and num players to be consistent
         all_future_rewards = np.zeros((self.batch_size, self.num_players, self.num_joint_actions))
 
         # 1. pull from the replay buffers all the information needed to do a learning step
@@ -143,7 +161,7 @@ class Trainer(BaseLearner):
         # 4. calculate the coco values for each player
         # need to clean any nans from the coco calculations
         # TODO: need to check for bad values i.e. None
-        coco_values = compute_coco_distributed(all_future_rewards, 8, self.num_players, cached_coco_values)
+        coco_values = compute_coco_distributed(all_future_rewards, 12, self.num_players, cached_coco_values)
 
         # cache the coco values, they are expensive!
         self.memory.save_coco_values(sample_idx, coco_values)
@@ -153,13 +171,7 @@ class Trainer(BaseLearner):
 
 
         # 6. calculate the index of the actual joint action that was played
-        joint_actions = joint_actions = (actions * self.joint_action_index_multiplier).sum(axis=1)
-        # print(actions.shape, self.joint_action_index_multiplier.shape, joint_actions.shape)
-        # print('actions')
-        # print(actions)
-        # print('multiplier')
-        # print(self.joint_action_index_multiplier)
-        # print(self.joint_action_index_multiplier, joint_actions, actions)
+        joint_actions = (actions * self.joint_action_index_multiplier).sum(axis=1)
 
         # 7. create the masks that will be used to make sure we only learn from the actions we took
         masks = tf.one_hot(joint_actions, self.num_joint_actions)
@@ -167,24 +179,21 @@ class Trainer(BaseLearner):
         # 8. actually perform the update
         self.update(states, masks, updated_q_values)
 
+        # TODO: periodically need to send out new weights
         # TODO: periodically need to swap brains
-        # print('done with training')
 
     def update(self, all_state_sample, all_masks, all_updated_q_values):  # , learner_name=None, epoch=0):
         masks = tf.convert_to_tensor(all_masks)
 
+        # we need to do an update for each agent's neural network
         for idx, name in enumerate(self.trainer_names):
-            # print(f'**** start {name}')
-        # for idx in range(2):
             name = self.trainer_names[idx]
             model = self.models[name]
 
             state_sample = all_state_sample[:, idx]
-            # print('state sample', all_state_sample.shape, state_sample.shape)
             state_sample = tf.convert_to_tensor(state_sample)
 
             updated_q_values = all_updated_q_values[:, idx]
-            # print('updated_q_values', all_updated_q_values.shape, updated_q_values.shape)
             updated_q_values = tf.convert_to_tensor(updated_q_values, dtype=tf.float32)
 
             # update the main model
@@ -193,21 +202,16 @@ class Trainer(BaseLearner):
                 # by first predicting the q values
                 q_values = model(state_sample)
 
-                # print(q_values.shape, masks.shape)
                 # Apply the masks to the Q-values to get the Q-value for action taken
                 q_action = tf.reduce_sum(tf.multiply(q_values, masks), axis=1)
 
-                # print(q_values.shape, q_action.shape, updated_q_values.shape)
-
                 # Calculate loss between new Q-value and old Q-value
                 # can use sample_weight to apply individual loss scaling
-                # loss = self.loss_function(updated_q_values, q_action)
                 loss = self.loss_functions[name](updated_q_values, q_action)
 
             # calculate and apply the gradients to the model
             grads = tape.gradient(loss, model.trainable_variables)
             grads = [tf.clip_by_norm(g, 2) for g in grads]
-            # self.optimizer.apply_gradients(zip(grads, model.trainable_variables))
             self.optimizers[name].apply_gradients(zip(grads, model.trainable_variables))
 
             # periodic tensorboard logging
@@ -226,15 +230,30 @@ class Trainer(BaseLearner):
 
 @ray.remote
 def train_learners(training_queue, input_size, num_joint_actions, num_agent_actions, batch_size):
+    """
+    Remote method that coordinates all of the gathering and saving of trajectory information as well as
+    the actual training of the neural networks.
+    :param training_queue: The queue to pull data from
+    :param input_size: The size of the inputs into the neural networks
+    :param num_joint_actions: The number of joint actions possible
+    :param num_agent_actions: The number of actions agents can take
+    :param batch_size: The size of the learning batches
+    """
     trainer_ref = None
-
-    num_rounds = 0
-    num_pulled = 0
+    max_number_of_no_data_training = 5
+    number_of_no_data_training = 0
+    data_trains = 0
+    no_data_trains = 0
 
     while True:
         # empty out the data queue before we go back to training
         new_data_received = False
+
+        pulls = 0
+        num_data = 0
+
         while not training_queue.empty():
+            pulls += 1
             new_data_received = True
             all_training_data = training_queue.get()
 
@@ -244,13 +263,37 @@ def train_learners(training_queue, input_size, num_joint_actions, num_agent_acti
                                              input_size=input_size,
                                              num_joint_actions=num_joint_actions,
                                              num_agent_actions=num_agent_actions,
-                                             batch_size=batch_size)
+                                             batch_size=batch_size,
+                                             gamma=0.99,
+                                             num_coco_calculation_splits=8)
 
+            # save the data received
             trainer_ref.add_data.remote(all_training_data)
 
+            # print(all_training_data)
+            num_data += len(all_training_data['archer_0'])
+            # for something in all_training_data[name]:
+            #     num_data += 1
+
         if new_data_received:
-            trainer_ref.train_nn.remote()
+            # if we received new data we need to do a training loop
+            start = time.time()
+            ray.get(trainer_ref.train_nn.remote())
+            end = time.time()
+            print('training data', pulls, num_data, end - start)
+            data_trains += 1
+            number_of_no_data_training = 0
         else:
-            time.sleep(0.01)
+            # slow down just a tiny bit if we didn't receive any new data
+            if trainer_ref is not None and number_of_no_data_training < max_number_of_no_data_training:
+                # print('no data training')
+                # trainer_ref.train_nn.remote()
+                no_data_trains += 1
+                number_of_no_data_training += 1
+            else:
+                time.sleep(0.01)
+
+        # if data_trains + no_data_trains > 0:
+        #     print(data_trains, no_data_trains, data_trains / (data_trains + no_data_trains))
 
         # TODO: periodically test the policies

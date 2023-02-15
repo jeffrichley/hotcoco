@@ -351,6 +351,7 @@ def compute_coco_group(data, num_players, cached_coco_values_groups):
         else:
             payoffs = new_data[idx]
             game = Game(nplayers=num_players, payoffs=payoffs)
+
             game_coco_values = game.coco_values()
             coco_values[idx] = game_coco_values
             num_not_cached += 1

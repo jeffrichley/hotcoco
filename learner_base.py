@@ -5,9 +5,14 @@ import numpy as np
 
 
 class BaseLearner:
+    """
+    The base class for learners.  Main components are the experience
+    replays as well as target and primary neural network.
+    """
 
     def __init__(self, trainer_names, input_size, num_joint_actions):
 
+        # basic information
         self.trainer_names = trainer_names
         self.input_size = input_size
         self.num_joint_actions = num_joint_actions
@@ -19,6 +24,7 @@ class BaseLearner:
         self.optimizers ={}
         self.loss_functions = {}
 
+        # create the primary and target networks
         for name in trainer_names:
             self.optimizers[name] = keras.optimizers.Adam()
             self.loss_functions[name] = keras.losses.Huber()
@@ -46,5 +52,12 @@ class BaseLearner:
         return model
 
     def query_model(self, agent_name, data, training=False):
+        """
+        Queries the named network for predictions
+        :param agent_name: Which agent are we querying
+        :param data: The observations to query for
+        :param training: Is the network training or just a basic query?  False will execute much faster
+        :return: The predicted values from the given observations.
+        """
         sample = tf.convert_to_tensor(data)
         return np.array(self.target_models[agent_name](sample, training=training))
