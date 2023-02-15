@@ -1,28 +1,23 @@
-import math
-import time
 import numpy as np
+from pettingzoo.butterfly import knights_archers_zombies_v10
 
-actions = np.array([[2., 1., 4., 0.],
-                    [3., 5., 0., 0.],
-                    [0., 4., 0., 0.],
-                    [5., 1., 0., 0.],
-                    [3., 0., 0., 0.],
-                    [5., 1., 1., 1.],
-                    [3., 0., 0., 0.],
-                    [5., 5., 5., 5.]])
+trainer_names = ['archer_0', 'archer_1', 'knight_0', 'knight_1']
+env = knights_archers_zombies_v10.env()
+env.reset()
 
-num_players = 4
-player_num_actions = 6
-batch_size = 8
+observations = np.zeros((1, 4, 135))
+for idx, name in enumerate(trainer_names):
+    observation = np.reshape(env.observe(name), 135)
+    observations[0, idx] = observation
+    print(observation.shape)
+    print('*********')
 
-player_powers = np.array(range(num_players-1, -1, -1))
-joint_action_index_multiplier = np.tile(np.power(player_num_actions, player_powers), (batch_size, 1))
+print(observations.shape)
 
-final = joint_actions = (actions * joint_action_index_multiplier).sum(axis=1)
-
-print('actions')
-print(actions)
-print('multiplier')
-print(joint_action_index_multiplier)
-print('final')
-print(final)
+for agent in env.agent_iter():
+    next_state, reward, termination, truncation, info = env.last()
+    if termination:
+        action = None
+    else:
+        action = env.action_space(agent).sample()
+    env.step(action)

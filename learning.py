@@ -5,6 +5,7 @@ from tensorflow import keras
 from keras import layers
 
 from coco_utils import compute_coco_distributed
+from learner_base import BaseLearner
 
 
 class Memory:
@@ -73,12 +74,15 @@ class Memory:
 
 
 @ray.remote
-class Trainer:
+class Trainer(BaseLearner):
 
     def __init__(self, trainer_names, input_size,
                  num_joint_actions, num_agent_actions,
                  gamma=0.99, batch_size=512,
                  num_coco_calculation_splits=4):
+
+        super().__init__(trainer_names=trainer_names, input_size=input_size, num_joint_actions=num_joint_actions)
+
         self.trainer_names = trainer_names
         self.input_size = input_size
         self.num_joint_actions = num_joint_actions
@@ -90,44 +94,10 @@ class Trainer:
         self.num_coco_calculation_splits = num_coco_calculation_splits
 
         # learning bits
-        self.gamma = 0.99
+        self.gamma = gamma
         self.batch_size = batch_size
-        # self.optimizer = keras.optimizers.Adam()
-        self.optimizers ={}
-        # self.loss_function = keras.losses.Huber()
-        self.loss_functions = {}
-
-        # actual neural nets to update
-        self.models = {}
-        self.target_models = {}
-        self.memories = {}
-        for name in trainer_names:
-            self.optimizers[name] = keras.optimizers.Adam()
-            self.loss_functions[name] = keras.losses.Huber()
-
-            self.models[name] = self.create_q_model(self.optimizers[name], self.loss_functions[name])
-            # TODO: shouldn't really be reusing the optimizer and loss functions
-            self.target_models[name] = self.create_q_model(self.optimizers[name], self.loss_functions[name])
 
         self.memory = Memory(num_players=self.num_players, memory_size=100000)
-
-    def create_q_model(self, optimizer, loss_function):
-
-        # create the networks
-        inputs_vectors = layers.Input(shape=self.input_size)
-
-        # dense policy layers
-        dense_layer0 = layers.Dense(128, activation='swish')(inputs_vectors)
-        dense_layer1 = layers.Dense(128, activation='swish')(dense_layer0)
-        dense_layer2 = layers.Dense(64, activation='swish')(dense_layer1)
-
-        # policy output
-        policy_output = layers.Dense(self.num_joint_actions, activation=None)(dense_layer2)
-
-        model = keras.Model(inputs=inputs_vectors, outputs=policy_output)
-        model.compile(optimizer=optimizer, loss=loss_function)
-
-        return model
 
     def add_data(self, new_training_data):
         states = None
@@ -195,16 +165,9 @@ class Trainer:
 
         # 8. actually perform the update
         self.update(states, masks, updated_q_values)
-        # update([state_ddg_dim_observation, state_combined_goal_heading_vector], p1_masks, p1_updated_q_values, learner_name='ddg', epoch=episode_count)
-        # for idx, name in enumerate(self.trainer_names):
-        #     state_sample = states[idx]
-        #     sample_updated_q_values = updated_q_value[idx]
-        #
-        #     print(type(self.models[name]))
-        #     self.models[name].update(state_sample, masks, sample_updated_q_values)
 
         # TODO: periodically need to swap brains
-        print('done with training')
+        # print('done with training')
 
     def update(self, all_state_sample, all_masks, all_updated_q_values):  # , learner_name=None, epoch=0):
         masks = tf.convert_to_tensor(all_masks)

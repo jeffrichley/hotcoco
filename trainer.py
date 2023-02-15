@@ -6,10 +6,10 @@ from learning import train_learners
 
 
 def train():
+    trainer_names = ['archer_0', 'archer_1', 'knight_0', 'knight_1']
     number_of_concurrent_games = 1
     # batch_size = 512
     batch_size = 16
-
     input_size = 135
     num_agents = 4
     num_agent_actions = 6
@@ -19,7 +19,11 @@ def train():
     cleaned_queue = Queue(maxsize=100)
 
     # setup the playing of games, these will play asynchronously
-    play_game_ref = play_knights_and_zombies.remote(play_queue=play_queue, number_of_concurrent_games=number_of_concurrent_games)
+    play_game_ref = play_knights_and_zombies.remote(trainer_names=trainer_names,
+                                                    input_size=input_size,
+                                                    num_joint_actions=num_joint_actions,
+                                                    play_queue=play_queue,
+                                                    number_of_concurrent_games=number_of_concurrent_games)
 
     # cleaning will happen on the fly when a game finishes
     clean_data.remote(play_queue=play_queue, cleaned_queue=cleaned_queue)
