@@ -10,7 +10,8 @@ from learner_base import BaseLearner
 class ZooRunner:
 
     # def __init__(self, agent_num, play_queue):
-    def __init__(self, agent_num, play_queue, trainer_names, input_size, num_joint_actions):
+    def __init__(self, agent_num, play_queue, trainer_names, input_size, num_joint_actions, weight_update_queue):
+
         # general information
         self.trainer_names = trainer_names
         self.num_joint_actions = num_joint_actions
@@ -20,6 +21,7 @@ class ZooRunner:
         self.agent_num = agent_num
         self.number_of_players = len(trainer_names)
         self.play_queue = play_queue
+        self.weight_update_queue = weight_update_queue
         self.env = self.create_env()
 
         # epsilon greedy sampling information
@@ -46,12 +48,23 @@ class ZooRunner:
         """
         self.epsilon = max(self.min_epsilon, self.min_epsilon + (self.max_epsilon - self.min_epsilon) * math.exp(-self.epsilon_decay * self.number_of_steps_played))
 
+    def check_model_updates(self):
+        try:
+            new_weights = self.weight_update_queue.get(block=False)
+            self.learner.update_model(new_weights)
+        except ray.util.queue.Empty:
+            pass
+
     def run_game(self):
         """
         Responsible for actually running a game until completion.  Once the game is complete, the new trajectory
         information will be pushed out through the queue.
         :return: The number of the agent that is completing the game
         """
+
+        # we need to check if there is an update to the weights of our model
+        self.check_model_updates()
+
         self.env.reset()
         all_observations = {}
         previous_states = {}
@@ -135,10 +148,11 @@ class ZooRunner:
 @ray.remote
 class KnightsZombiesRunner(ZooRunner):
 
-    def __init__(self, agent_num, play_queue, trainer_names, input_size, num_joint_actions):
+    def __init__(self, agent_num, play_queue, trainer_names, input_size, num_joint_actions, weight_update_queue):
         super().__init__(agent_num=agent_num, play_queue=play_queue,
                          trainer_names=trainer_names, input_size=input_size,
-                         num_joint_actions=num_joint_actions)
+                         num_joint_actions=num_joint_actions,
+                         weight_update_queue=weight_update_queue)
 
     def create_env(self):
         # return knights_archers_zombies_v10.env(render_mode='human')
@@ -146,13 +160,16 @@ class KnightsZombiesRunner(ZooRunner):
 
 
 @ray.remote
-def play_knights_and_zombies(trainer_names, input_size, num_joint_actions, play_queue, number_of_concurrent_games=1):
+def play_knights_and_zombies(trainer_names, input_size, num_joint_actions, play_queue,
+                             weight_update_queues, number_of_concurrent_games=1):
     # create a number of the game runners
     runners = [KnightsZombiesRunner.remote(agent_num=agent_num,
                                            play_queue=play_queue,
                                            trainer_names=trainer_names,
                                            input_size=input_size,
-                                           num_joint_actions=num_joint_actions) for agent_num in range(number_of_concurrent_games)]
+                                           num_joint_actions=num_joint_actions,
+                                           weight_update_queue=weight_update_queue)
+               for agent_num, weight_update_queue in zip(range(number_of_concurrent_games), weight_update_queues)]
 
     # kick off the playing of games
     not_done = [runner.run_game.remote() for runner in runners]

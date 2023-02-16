@@ -61,3 +61,12 @@ class BaseLearner:
         """
         sample = tf.convert_to_tensor(data)
         return np.array(self.target_models[agent_name](sample, training=training))
+
+    def update_model(self, new_model_weights):
+        """
+        Updates the neural networks' weights
+        :param new_model_weights: The weights to use for updating
+        """
+        for agent_name in new_model_weights:
+            new_model_weight = new_model_weights[agent_name]
+            self.models[agent_name].set_weights(new_model_weight)

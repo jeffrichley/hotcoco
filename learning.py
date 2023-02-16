@@ -142,7 +142,7 @@ class Trainer(BaseLearner):
 
         # self.memory.remember(state=states, action=actions, reward=rewards, state_prime=state_primes)
 
-    def train_nn(self):
+    def train_nn(self, weight_update_queues=None):
         # used for calculating coco values
         all_future_rewards = np.zeros((self.batch_size, self.num_players, self.num_joint_actions))
 
@@ -179,10 +179,17 @@ class Trainer(BaseLearner):
         # 8. actually perform the update
         self.update(states, masks, updated_q_values)
 
-        # TODO: periodically need to send out new weights
+        if weight_update_queues is not None:
+            new_weights = {}
+            for agent_name in self.trainer_names:
+                new_weights[agent_name] = self.models[agent_name].get_weights()
+
+            for queue in weight_update_queues:
+                queue.put(new_weights)
+
         # TODO: periodically need to swap brains
 
-    def update(self, all_state_sample, all_masks, all_updated_q_values):  # , learner_name=None, epoch=0):
+    def update(self, all_state_sample, all_masks, all_updated_q_values):
         masks = tf.convert_to_tensor(all_masks)
 
         # we need to do an update for each agent's neural network
@@ -229,7 +236,8 @@ class Trainer(BaseLearner):
 
 
 @ray.remote
-def train_learners(training_queue, input_size, num_joint_actions, num_agent_actions, batch_size):
+def train_learners(training_queue, input_size, num_joint_actions, num_agent_actions, batch_size,
+                   weight_distribution_frequency, weight_update_queues):
     """
     Remote method that coordinates all of the gathering and saving of trajectory information as well as
     the actual training of the neural networks.
@@ -238,12 +246,15 @@ def train_learners(training_queue, input_size, num_joint_actions, num_agent_acti
     :param num_joint_actions: The number of joint actions possible
     :param num_agent_actions: The number of actions agents can take
     :param batch_size: The size of the learning batches
+    :param weight_distribution_frequency: How often should we update weights?
+    :param weight_update_queues: The queues to push new model weights through
     """
     trainer_ref = None
     max_number_of_no_data_training = 5
     number_of_no_data_training = 0
     data_trains = 0
     no_data_trains = 0
+    num_training_iterations = 0
 
     while True:
         # empty out the data queue before we go back to training
@@ -278,11 +289,16 @@ def train_learners(training_queue, input_size, num_joint_actions, num_agent_acti
         if new_data_received:
             # if we received new data we need to do a training loop
             start = time.time()
-            ray.get(trainer_ref.train_nn.remote())
+            # change this to only periodically updating weights
+            if num_training_iterations % weight_distribution_frequency == 0:
+                ray.get(trainer_ref.train_nn.remote(weight_update_queues=weight_update_queues))
+            else:
+                ray.get(trainer_ref.train_nn.remote(weight_update_queues=None))
+
             end = time.time()
-            print('training data', pulls, num_data, end - start)
             data_trains += 1
             number_of_no_data_training = 0
+            num_training_iterations += 1
         else:
             # slow down just a tiny bit if we didn't receive any new data
             if trainer_ref is not None and number_of_no_data_training < max_number_of_no_data_training:
@@ -295,5 +311,7 @@ def train_learners(training_queue, input_size, num_joint_actions, num_agent_acti
 
         # if data_trains + no_data_trains > 0:
         #     print(data_trains, no_data_trains, data_trains / (data_trains + no_data_trains))
+
+
 
         # TODO: periodically test the policies
