@@ -1,0 +1,24 @@
+// dot -Tpng training_flow.dot -o training_flow.png
+
+digraph G {
+
+    trainer [label="Trainer"]
+    game_coordinator [label="Game\nCoordinator", shape=square]
+    zoo_runner [label="Zoo Runner"]
+    cleaner [label="Data\nCleaner", shape=square]
+    train_learners [label="Train\nLearners", shape=square]
+    rl_trainer [label="Trainer"]
+
+
+    trainer -> game_coordinator [label="creates"]
+    trainer -> cleaner [label="creates"]
+    trainer -> train_learners [label="creates"]
+    game_coordinator -> cleaner [style="dashed", label="passes\nraw data"]
+    game_coordinator -> zoo_runner [style="dashed", arrowhead=crow, label="play\ngames"]
+    cleaner -> train_learners [style="dashed", label="passes\ncleaned data"]
+    train_learners -> rl_trainer [style="dashed", label="passes\nreplay data"]
+    train_learners -> rl_trainer [style="dashed", label="learn"]
+
+    rl_trainer -> zoo_runner [arrowhead=crow, style="dashed", label="distributes\ntrained\nweights"]
+
+}

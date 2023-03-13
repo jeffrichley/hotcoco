@@ -283,8 +283,6 @@ def train_learners(training_queue, input_size, num_joint_actions, num_agent_acti
 
             # print(all_training_data)
             num_data += len(all_training_data['archer_0'])
-            # for something in all_training_data[name]:
-            #     num_data += 1
 
         if new_data_received:
             # if we received new data we need to do a training loop

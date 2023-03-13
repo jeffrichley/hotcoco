@@ -7,7 +7,7 @@ from learning import train_learners
 
 def train():
     trainer_names = ['archer_0', 'archer_1', 'knight_0', 'knight_1']
-    weight_distribution_frequency = 20
+    weight_distribution_frequency = 1000
 
     # number_of_concurrent_games = 1
     number_of_concurrent_games = 2
