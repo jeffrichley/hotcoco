@@ -7,12 +7,13 @@ from learning import train_learners
 
 def train():
     trainer_names = ['archer_0', 'archer_1', 'knight_0', 'knight_1']
-    weight_distribution_frequency = 4
+    weight_distribution_frequency = 20
 
-    number_of_concurrent_games = 1
-    # number_of_concurrent_games = 2
+    # number_of_concurrent_games = 1
+    number_of_concurrent_games = 2
     # batch_size = 512
-    batch_size = 16
+    batch_size = 128
+    # batch_size = 16
 
     input_size = 135
     num_agents = 4

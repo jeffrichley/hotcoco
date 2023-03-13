@@ -50,9 +50,12 @@ class ZooRunner:
 
     def check_model_updates(self):
         try:
+            # we need to check to see if there are new weights to update our neural network with
             new_weights = self.weight_update_queue.get(block=False)
             self.learner.update_model(new_weights)
         except ray.util.queue.Empty:
+            # there is a good chance there will be no update which will cause an ray.util.queue.Empty error
+            # ew, using catching errors as control flow...sort of :(
             pass
 
     def run_game(self):

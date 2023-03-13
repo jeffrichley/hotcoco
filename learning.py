@@ -296,6 +296,7 @@ def train_learners(training_queue, input_size, num_joint_actions, num_agent_acti
                 ray.get(trainer_ref.train_nn.remote(weight_update_queues=None))
 
             end = time.time()
+            print('training data', pulls, num_data, end - start)
             data_trains += 1
             number_of_no_data_training = 0
             num_training_iterations += 1

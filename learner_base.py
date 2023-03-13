@@ -68,5 +68,8 @@ class BaseLearner:
         :param new_model_weights: The weights to use for updating
         """
         for agent_name in new_model_weights:
+            print('****************************')
+            print(f' just updated {agent_name}')
+            print('****************************')
             new_model_weight = new_model_weights[agent_name]
             self.models[agent_name].set_weights(new_model_weight)
