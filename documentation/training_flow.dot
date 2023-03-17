@@ -9,7 +9,6 @@ digraph G {
     train_learners [label="Train\nLearners", shape=square]
     rl_trainer [label="Trainer"]
 
-
     trainer -> game_coordinator [label="creates"]
     trainer -> cleaner [label="creates"]
     trainer -> train_learners [label="creates"]
