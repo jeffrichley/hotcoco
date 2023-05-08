@@ -16,3 +16,4 @@ dependencies:
     - PettingZoo
     - pettingzoo[butterfly]
     - opencv-python
+    - pygame
